@@ -3,7 +3,7 @@ import pandas as pd
 import torch
 import torch.nn as nn 
 from sklearn.utils import shuffle
-from sklearn.metrics import roc_auc_score, f1_score
+from sklearn.metrics import roc_auc_score, accuracy_score
 from model import MODEL
 import logging
 
@@ -19,9 +19,19 @@ def train(args, data_info):
     kg_data = data_info[7]
 
     model, optimizer_kge, optimizer_cf = _init_model(args, data_info)
-    
+    model.train()  
+
     for step in range(args.n_epoch): 
         train_data = shuffle(train_data)
+        start = 0
+        while start  < train_data.shape[0]:
+            cf_loss = model('get_cf_loss', *_get_feed_data(args, train_data[start:start + args.batch_size]['u'],
+                        train_data[start:start + args.batch_size]['i'], train_data[start:start + args.batch_size]['label']))
+            optimizer_cf.zero_grad()
+            cf_loss.backward()
+            optimizer_cf.step()
+            start += args.batch_size
+
         start = 0
         while start  < kg_data.shape[0]:
             kge_loss = model('get_kge_loss', *_get_feed_data(args, kg_data[start:start + args.batch_size]['h'],
@@ -31,25 +41,16 @@ def train(args, data_info):
             optimizer_kge.step()
             start += args.batch_size
 
-        start = 0
-        while start  < train_data.shape[0]:
-            cf_loss = model('get_cf_loss', *_get_feed_data(args, train_data[start:start + args.batch_size]['u'],
-                        train_data[start:start + args.batch_size]['i'], train_data[start:start + args.batch_size]['label']))
-            optimizer_cf.zero_grad()
-            cf_loss.backward()
-            optimizer_cf.step()
-            start += args.batch_size
-        
-        train_auc, train_f1 = ctr_eval(args, model, train_data)
-        eval_auc, eval_f1 = ctr_eval(args, model, eval_data)
-        test_auc, test_f1 = ctr_eval(args, model, test_data)
-        ctr_info = 'epoch %.2d    train auc: %.4f    train f1: %.4f    eval auc: %.4f    eval f1: %.4f   test auc: %.4f    test f1: %.4f '
-        logging.info(ctr_info, step, train_auc, train_f1, eval_auc, eval_f1, test_auc, test_f1)
+        train_auc, train_acc = ctr_eval(args, model, train_data)
+        eval_auc, eval_acc = ctr_eval(args, model, eval_data)
+        test_auc, test_acc = ctr_eval(args, model, test_data)
+        ctr_info = 'epoch %.2d    train auc: %.4f    train acc: %.4f    eval auc: %.4f    eval acc: %.4f   test auc: %.4f    test acc: %.4f '
+        logging.info(ctr_info, step, train_auc, train_acc, eval_auc, eval_acc, test_auc, test_acc)
 
 
 def ctr_eval(args, model, data):
     auc_list = []
-    f1_list = []
+    acc_list = []
     model.eval()
     start = 0
     while start < data.shape[0]:
@@ -61,14 +62,13 @@ def ctr_eval(args, model, data):
 
         scores[scores >= 0.5] = 1
         scores[scores < 0.5] = 0
-        f1 = f1_score(y_true=labels, y_pred=scores)
-        f1_list.append(f1)
+        acc = accuracy_score(y_true=labels, y_pred=scores)
+        acc_list.append(acc)
 
         start += args.batch_size
-    model.train()  
     auc = float(np.mean(auc_list))
-    f1 = float(np.mean(f1_list))
-    return auc, f1
+    acc = float(np.mean(acc_list))
+    return auc, acc
 
 
 def _init_model(args, data_info):

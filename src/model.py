@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from layer import CrossCompressUnit
 
 
 class MODEL(nn.Module):
@@ -14,39 +13,50 @@ class MODEL(nn.Module):
         self.relation_emb = nn.Embedding(self.n_relation, self.dim)
         self.entity_emb = nn.Embedding(self.n_entity, self.dim)
 
-        self.user_mlp = self._build_lower_mlp(self.dim, self.dim)
-        self.tail_mlp = self._build_lower_mlp(self.dim, self.dim)
+        self.user_mlp = self.linear_layer(self.dim, self.dim, dropout=0.5)
+        self.relation_mlp = self.linear_layer(self.dim, self.dim, dropout=0.5)
         self.cf_mlp = self._build_higher_mlp(self.dim * 2, 1)
         self.kge_mlp = self._build_higher_mlp(self.dim * 2, self.dim)
-        self.cc_unit = CrossCompressUnit(self.dim)
+        
+        self.weight_vv = torch.rand((self.dim, 1), requires_grad=True)
+        self.weight_ev = torch.rand((self.dim, 1), requires_grad=True)
+        self.weight_ve = torch.rand((self.dim, 1), requires_grad=True)
+        self.weight_ee = torch.rand((self.dim, 1), requires_grad=True)
+        self.bias_v = torch.rand(1, requires_grad=True)
+        self.bias_e = torch.rand(1, requires_grad=True)
 
         self._init_weight()
 
     def _build_kge_loss(self, h, r, t):
         h_emb = self.entity_emb(h)
+        item_emb = self.item_emb(h)
         r_emb = self.relation_emb(r)
         t_emb = self.entity_emb(t)
-        _, h_emb = self.cc_unit(self.item_emb(h), self.entity_emb(h))
-        t_emb = self.tail_mlp(t_emb)
+        for i in range(self.L):
+            r_emb = self.relation_mlp(r_emb)
+            item_emb, h_emb = self.cc_unit(item_emb, h_emb)
         t_pred_emb = self.kge_mlp(torch.cat((h_emb, r_emb), dim=-1))
-        loss = torch.mean(torch.sum(torch.square(t_emb - t_pred_emb), dim=1), dim=0)
-        print(loss)
+        loss = torch.sigmoid(torch.sum(t_emb * t_pred_emb))
         return loss
 
 
     def _build_cf_loss(self, users, items, labels):
-        user_emb = self.user_mlp(self.user_emb(users))
-        item_emb, _ = self.cc_unit(self.item_emb(items), self.entity_emb(items))
+        user_emb = self.user_emb(users)
+        item_emb = self.item_emb(items)
+        h_emb = self.entity_emb(items)
+        for i in range(self.L):
+            user_emb = self.user_mlp(user_emb)
+            item_emb, h_emb = self.cc_unit(item_emb, h_emb)
         scores = self.cf_mlp(torch.cat((user_emb, item_emb), dim=-1))
         labels = labels.float().unsqueeze(1)
-        loss = nn.BCELoss()(scores, labels)
-        print(loss)
+        loss = nn.BCEWithLogitsLoss()(scores, labels)
         return loss
 
 
     def _get_scores(self, users, items):
-        user_emb = self.user_emb(users)
-        item_emb = self.item_emb(items)
+        user_emb = self.user_mlp(self.user_emb(users))
+        for i in range(self.L):
+            item_emb, _ = self.cc_unit(self.item_emb(items), self.entity_emb(items))
         scores = self.cf_mlp(torch.cat((user_emb, item_emb), dim=-1))
         return scores
 
@@ -61,13 +71,19 @@ class MODEL(nn.Module):
         self.H = args.H
         self.l2_weight = args.l2_weight
 
+    def linear_layer(self, in_dim, out_dim, dropout=0):
+        return nn.Sequential(
+            nn.Linear(in_dim, out_dim),
+            nn.LeakyReLU(),
+            nn.Dropout(dropout)
+        )
 
-    def _build_lower_mlp(self, in_dim, out_dim):
-        mlp = nn.Sequential()
-        for i in range(self.L):
-            mlp.add_module('dense{}'.format(i), nn.Linear(in_dim, out_dim, bias=True))
-            mlp.add_module('relu{}'.format(i), nn.ReLU())
-        return mlp
+    # def _build_lower_mlp(self, dim):
+    #     mlp = nn.Sequential()
+    #     for i in range(self.L):
+    #         mlp.add_module('dense{}'.format(i), nn.Linear(dim, dim, bias=True))
+    #         mlp.add_module('relu{}'.format(i), nn.ReLU())
+    #     return mlp
 
     def _build_higher_mlp(self, in_dim, out_dim):
         mlp = nn.Sequential() 
@@ -78,18 +94,28 @@ class MODEL(nn.Module):
         mlp.add_module('sigmoid', nn.Sigmoid())
         return mlp
 
+    def cc_unit(self, item_emb, h_emb):
+        item_emb_reshape = item_emb.unsqueeze(-1)
+        h_emb_reshape = h_emb.unsqueeze(-1)
+        c = item_emb_reshape * h_emb_reshape.permute((0, 2, 1))
+        c_t = h_emb_reshape * item_emb_reshape.permute((0, 2, 1))
+        item_emb_c = torch.matmul(c,self.weight_vv).squeeze() + \
+                       torch.matmul(c_t, self.weight_ev).squeeze() + self.bias_v 
+        h_emb_c = torch.matmul(c, self.weight_ve).squeeze() + \
+                       torch.matmul(c_t, self.weight_ee).squeeze() + self.bias_e
+        return item_emb_c, h_emb_c
 
     def _init_weight(self):
-        # init embedding
+        # init Embedding
         nn.init.xavier_uniform_(self.user_emb.weight)
         nn.init.xavier_uniform_(self.item_emb.weight)
         nn.init.xavier_uniform_(self.relation_emb.weight)
         nn.init.xavier_uniform_(self.entity_emb.weight)
         # init mlp
-        for mlp in [self.user_mlp, self.tail_mlp]:
-            for layer in mlp:
-                if isinstance(layer, nn.Linear):
-                    nn.init.xavier_uniform_(layer.weight)
+        # for mlp in [self.user_mlp, self.relation_mlp]:
+        #     for layer in mlp:
+        #         if isinstance(layer, nn.Linear):
+        #             nn.init.xavier_uniform_(layer.weight)
     
     
     def forward(self, mode, *input):
