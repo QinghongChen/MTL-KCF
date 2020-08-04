@@ -9,21 +9,21 @@ logging.basicConfig(format="[%(asctime)s] %(levelname)s: %(message)s", level=log
 
 def load_data(args):
     logging.info("================== preparing data ===================")
-    rating_data, n_users, n_items = load_rating(args)
+    rating_data, n_user, n_item = load_rating(args)
     train_data, eval_data, test_data = dataset_split(rating_data)
-    kg_data, n_relations, n_entities = load_kg(args)
+    kg_data, n_relation, n_entity = load_kg(args)
     # train_data = pd.merge(train_data, kg_data, left_on='i', right_on='h')
-    print_info(n_users, n_items, n_entities, n_relations)
-    return train_data, eval_data, test_data, n_users, n_items, n_relations, n_entities, kg_data
+    print_info(n_user, n_item, n_entity, n_relation)
+    return train_data, eval_data, test_data, n_user, n_item, n_relation, n_entity, kg_data
 
 
 def load_rating(args):
     rating_file = '../data/' + args.dataset + '/ratings_final.txt'
     logging.info("load rating file: %s", rating_file)
     rating_data = pd.read_csv(rating_file, sep='\t', names=['u', 'i', 'label'])
-    n_users = max(rating_data['u']) + 1
-    n_items = max(rating_data['i']) + 1
-    return rating_data, n_users, n_items
+    n_user = max(rating_data['u']) + 1
+    n_item = max(rating_data['i']) + 1
+    return rating_data, n_user, n_item
 
 
 def dataset_split(rating_data):
@@ -47,13 +47,13 @@ def load_kg(args):
     logging.info("locading kg file: %s", kg_file)
     kg_data = pd.read_csv(kg_file, sep='\t', names=['h', 'r', 't'])
     kg_data = kg_data.drop_duplicates()
-    n_relations = max(kg_data['r']) + 1
-    n_entities = max(max(kg_data['h']), max(kg_data['t'])) + 1
-    return kg_data, n_relations, n_entities
+    n_relation = max(kg_data['r']) + 1
+    n_entity = max(max(kg_data['h']), max(kg_data['t'])) + 1
+    return kg_data, n_relation, n_entity
 
 
-def print_info(n_users, n_items, n_entities, n_relations):
-    print('n_users:            %d' % n_users)
-    print('n_items:            %d' % n_items)
-    print('n_entities:         %d' % n_entities)
-    print('n_relations:        %d' % n_relations)
+def print_info(n_user, n_item, n_entity, n_relation):
+    print('n_user:            %d' % n_user)
+    print('n_item:            %d' % n_item)
+    print('n_entity:         %d' % n_entity)
+    print('n_relation:        %d' % n_relation)

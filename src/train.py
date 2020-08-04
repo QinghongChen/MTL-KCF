@@ -13,42 +13,31 @@ logging.basicConfig(format="[%(asctime)s] %(levelname)s: %(message)s", level=log
 
 def train(args, data_info):
     logging.info("================== training MODEL ====================")
-    # train_data, eval_data, test_data, n_users_entities, n_relations, triplet_sets
     train_data = data_info[0]
     eval_data = data_info[1]
     test_data = data_info[2]
     kg_data = data_info[7]
 
-    model, optimizer_kg, optimizer, loss_func = _init_model(args, data_info)
+    model, optimizer_kge, optimizer_cf = _init_model(args, data_info)
     
     for step in range(args.n_epoch): 
         train_data = shuffle(train_data)
         start = 0
         while start  < kg_data.shape[0]:
-            loss_t = model('calc_t_loss', *_get_three_data(args, kg_data[start:start + args.batch_size]['h'],
+            kge_loss = model('get_kge_loss', *_get_feed_data(args, kg_data[start:start + args.batch_size]['h'],
                         kg_data[start:start + args.batch_size]['r'], kg_data[start:start + args.batch_size]['t']))
-            print('loss_t: {}'.format(loss_t))
-            optimizer_kg.zero_grad()
-            loss_t.backward()
-            optimizer_kg.step()
+            optimizer_kge.zero_grad()
+            kge_loss.backward()
+            optimizer_kge.step()
             start += args.batch_size
 
         start = 0
         while start  < train_data.shape[0]:
-            labels = _get_label(args, train_data[start:start + args.batch_size]['label'].values)
-            scores = model('calc_score', *_get_two_data(args, train_data[start:start + args.batch_size]['u'],
-                        train_data[start:start + args.batch_size]['i']))
-            loss_u = loss_func(scores, labels)
-            print('loss_u: {}'.format(loss_u))
-        
-            loss_it = model('calc_it_loss', *_get_two_data(args, train_data[start:start + args.batch_size]['u'],
-                        train_data[start:start + args.batch_size]['i']))
-            print('loss_it: {}'.format(loss_it))
-        
-            loss = loss_u + loss_it
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            cf_loss = model('get_cf_loss', *_get_feed_data(args, train_data[start:start + args.batch_size]['u'],
+                        train_data[start:start + args.batch_size]['i'], train_data[start:start + args.batch_size]['label']))
+            optimizer_cf.zero_grad()
+            cf_loss.backward()
+            optimizer_cf.step()
             start += args.batch_size
         
         train_auc, train_f1 = ctr_eval(args, model, train_data)
@@ -65,7 +54,7 @@ def ctr_eval(args, model, data):
     start = 0
     while start < data.shape[0]:
         labels = data[start:start + args.batch_size]['label'].values
-        scores = model('calc_score', *_get_pred_data(args, data, start, start + args.batch_size))
+        scores = model('predict', *_get_pred_data(args, data, start, start + args.batch_size))
         scores = scores.detach().cpu().numpy()
         auc = roc_auc_score(y_true=labels, y_score=scores)
         auc_list.append(auc)
@@ -83,34 +72,27 @@ def ctr_eval(args, model, data):
 
 
 def _init_model(args, data_info):
-    n_users = data_info[3]
-    n_items = data_info[4]
-    n_relations = data_info[5]
-    n_entities = data_info[6]
-    model = MODEL(args, n_users, n_items, n_relations, n_entities)
+    n_user = data_info[3]
+    n_item = data_info[4]
+    n_relation = data_info[5]
+    n_entity = data_info[6]
+    model = MODEL(args, n_user, n_item, n_relation, n_entity)
     if args.use_cuda:
         model.cuda()
-    optimizer_kg = torch.optim.Adam(
+    optimizer_kge = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr = args.lr,
         weight_decay = args.l2_weight,
     )
-    optimizer = torch.optim.Adam(
+    optimizer_cf = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr = args.lr,
         weight_decay = args.l2_weight,
     )
-    loss_func = nn.BCELoss()
-    return model, optimizer_kg, optimizer, loss_func
+    return model, optimizer_kge, optimizer_cf
 
 
-def _get_label(args, labels):
-    labels = torch.FloatTensor(labels)
-    if args.use_cuda:
-        labels = labels.cuda()
-    return labels
-
-def _get_three_data(args, a, b, c):
+def _get_feed_data(args, a, b, c):
     a = torch.LongTensor(a.to_numpy())
     b = torch.LongTensor(b.to_numpy())
     c = torch.LongTensor(c.to_numpy())
@@ -119,22 +101,6 @@ def _get_three_data(args, a, b, c):
         b = b.cuda()
         c = c.cuda()
     return a, b, c
-
-
-def _get_two_data(args, a, b):
-    a = torch.LongTensor(a.to_numpy())
-    b = torch.LongTensor(b.to_numpy())
-    if args.use_cuda:
-        a = a.cuda()
-        b = b.cuda()
-    return a, b
-
-
-def _get_one_data(args, a):
-    a = torch.LongTensor(a.to_numpy())
-    if args.use_cuda:
-        a = a.cuda()
-    return a
 
 
 def _get_pred_data(args, data, start, end):
