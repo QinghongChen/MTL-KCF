@@ -15,8 +15,8 @@ class MODEL(nn.Module):
 
         self.user_mlp = self.linear_layer(self.dim, self.dim, dropout=0.5)
         self.relation_mlp = self.linear_layer(self.dim, self.dim, dropout=0.5)
-        self.cf_mlp = self._build_higher_mlp(self.dim * 2, 1)
-        self.kge_mlp = self._build_higher_mlp(self.dim * 2, self.dim)
+        self.cf_mlp = self._build_higher_mlp(self.dim * 2, 1, dropout=0.5)
+        self.kge_mlp = self._build_higher_mlp(self.dim * 2, self.dim, dropout=0.5)
         
         self.weight_vv = torch.rand((self.dim, 1), requires_grad=True)
         self.weight_ev = torch.rand((self.dim, 1), requires_grad=True)
@@ -78,21 +78,16 @@ class MODEL(nn.Module):
             nn.Dropout(dropout)
         )
 
-    # def _build_lower_mlp(self, dim):
-    #     mlp = nn.Sequential()
-    #     for i in range(self.L):
-    #         mlp.add_module('dense{}'.format(i), nn.Linear(dim, dim, bias=True))
-    #         mlp.add_module('relu{}'.format(i), nn.ReLU())
-    #     return mlp
 
-    def _build_higher_mlp(self, in_dim, out_dim):
+    def _build_higher_mlp(self, in_dim, out_dim, dropout=0):
         mlp = nn.Sequential() 
         for i in range(self.H - 1):
-            mlp.add_module('dense{}'.format(i), nn.Linear(in_dim, in_dim, bias=True))
-            mlp.add_module('relu{}'.format(i), nn.ReLU())
-        mlp.add_module('dense', nn.Linear(in_dim, out_dim, bias=True))
-        mlp.add_module('sigmoid', nn.Sigmoid())
+            mlp.add_module('dense{}'.format(i), nn.Linear(in_dim, in_dim))
+            mlp.add_module('relu{}'.format(i), nn.LeakyReLU())
+            mlp.add_module('drop{}'.format(i), nn.Dropout(dropout))
+        mlp.add_module('dense', nn.Linear(in_dim, out_dim))
         return mlp
+
 
     def cc_unit(self, item_emb, h_emb):
         item_emb_reshape = item_emb.unsqueeze(-1)
@@ -105,17 +100,13 @@ class MODEL(nn.Module):
                        torch.matmul(c_t, self.weight_ee).squeeze() + self.bias_e
         return item_emb_c, h_emb_c
 
+
     def _init_weight(self):
         # init Embedding
         nn.init.xavier_uniform_(self.user_emb.weight)
         nn.init.xavier_uniform_(self.item_emb.weight)
         nn.init.xavier_uniform_(self.relation_emb.weight)
         nn.init.xavier_uniform_(self.entity_emb.weight)
-        # init mlp
-        # for mlp in [self.user_mlp, self.relation_mlp]:
-        #     for layer in mlp:
-        #         if isinstance(layer, nn.Linear):
-        #             nn.init.xavier_uniform_(layer.weight)
     
     
     def forward(self, mode, *input):
