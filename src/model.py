@@ -58,6 +58,7 @@ class MODEL(nn.Module):
         for i in range(self.L):
             item_emb, _ = self.cc_unit(self.item_emb(items), self.entity_emb(items))
         scores = self.cf_mlp(torch.cat((user_emb, item_emb), dim=-1))
+        scores = torch.sigmoid(scores)
         return scores
 
 

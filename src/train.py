@@ -32,14 +32,15 @@ def train(args, data_info):
             optimizer_cf.step()
             start += args.batch_size
 
-        start = 0
-        while start  < kg_data.shape[0]:
-            kge_loss = model('get_kge_loss', *_get_feed_data(args, kg_data[start:start + args.batch_size]['h'],
-                        kg_data[start:start + args.batch_size]['r'], kg_data[start:start + args.batch_size]['t']))
-            optimizer_kge.zero_grad()
-            kge_loss.backward()
-            optimizer_kge.step()
-            start += args.batch_size
+        if step % args.kge_interval == 0:
+            start = 0
+            while start  < kg_data.shape[0]:
+                kge_loss = model('get_kge_loss', *_get_feed_data(args, kg_data[start:start + args.batch_size]['h'],
+                            kg_data[start:start + args.batch_size]['r'], kg_data[start:start + args.batch_size]['t']))
+                optimizer_kge.zero_grad()
+                kge_loss.backward()
+                optimizer_kge.step()
+                start += args.batch_size
 
         train_auc, train_acc = ctr_eval(args, model, train_data)
         eval_auc, eval_acc = ctr_eval(args, model, eval_data)
@@ -81,12 +82,12 @@ def _init_model(args, data_info):
         model.cuda()
     optimizer_kge = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
-        lr = args.lr,
+        lr = args.lr_kge,
         weight_decay = args.l2_weight,
     )
     optimizer_cf = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
-        lr = args.lr,
+        lr = args.lr_cf,
         weight_decay = args.l2_weight,
     )
     return model, optimizer_kge, optimizer_cf
